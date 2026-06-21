@@ -21,10 +21,10 @@ from advect.core import (
 def test_wip_commit_format():
     msg = WIP_COMMIT_FMT.format(
         hostname="macbook",
-        target="glob",
+        target="slate",
         branch="feat/pulse",
     )
-    assert msg == "[skip ci] [advect:wip] macbook \u2192 glob: feat/pulse"
+    assert msg == "[skip ci] [advect:wip] macbook \u2192 slate: feat/pulse"
     assert WIP_SENTINEL in msg
     assert "[skip ci]" in msg
 
@@ -107,7 +107,7 @@ def test_has_wip_commit(tmp_path):
             f.write("change\n")
         subprocess.run(["git", "add", "-A"], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "[skip ci] [advect:wip] test \u2192 glob: main"],
+            ["git", "commit", "-m", "[skip ci] [advect:wip] test \u2192 slate: main"],
             cwd=repo_path, capture_output=True,
         )
         assert has_wip_commit()
@@ -125,7 +125,7 @@ def test_commit_and_unwrap_wip(tmp_path):
         ctx = detect_project()
 
         # Not dirty, should not commit
-        assert not commit_wip(ctx, "glob")
+        assert not commit_wip(ctx, "slate")
 
         # Make dirty
         with open(os.path.join(repo_path, "dirty.txt"), "w") as f:
@@ -136,7 +136,7 @@ def test_commit_and_unwrap_wip(tmp_path):
         assert ctx.is_dirty
 
         # Commit WIP
-        assert commit_wip(ctx, "glob")
+        assert commit_wip(ctx, "slate")
         assert has_wip_commit()
 
         # Unwrap
@@ -181,7 +181,7 @@ def test_generate_handoff_with_wip(tmp_path):
         with open(os.path.join(repo_path, "change.txt"), "w") as f:
             f.write("change\n")
         ctx = detect_project()
-        commit_wip(ctx, "glob")
+        commit_wip(ctx, "slate")
 
         ctx = detect_project()
         content = generate_handoff(ctx, "WIP handoff test", True)

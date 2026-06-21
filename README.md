@@ -30,10 +30,10 @@ poetry install
 ### Push work to a remote
 
 ```bash
-advect push glob "finishing the auth refactor"
+advect push slate "finishing the auth refactor"
 ```
 
-The default target is `glob`. Any Tailscale-reachable hostname works:
+The default target is `slate`. Any Tailscale-reachable hostname works:
 
 ```bash
 advect push myserver "rebasing the auth flow"
@@ -53,7 +53,7 @@ What happens:
 ### Pull work back
 
 ```bash
-advect pull glob
+advect pull slate
 ```
 
 Driven entirely from the laptop — no advect needed on the remote. Commits any dirty state on the remote, pushes, pulls locally, and offers to unwrap the WIP commit.
@@ -79,7 +79,7 @@ Adds `.handoff.md` to the project's `.gitignore`.
 advect uses a sentinel format for WIP commits:
 
 ```
-[skip ci] [advect:wip] macbook → glob: feat/auth
+[skip ci] [advect:wip] macbook → slate: feat/auth
 ```
 
 - `[skip ci]` prevents GitHub Actions from running on the WIP push
@@ -103,22 +103,22 @@ fi
 ## How it works
 
 ```
-laptop                          remote (glob)
+laptop                          remote (slate)
 ──────                          ─────────────
-advect push glob "msg"
+advect push slate "msg"
   ├─ preflight checks ─────────── tailscale ping, ssh
   ├─ git add -A && commit [wip]
   ├─ git push origin branch
   ├─ sync notes, ws sweep
   ├─ generate .handoff.md
-  ├─ ssh glob ──────────────────── git fetch && checkout && pull
+  ├─ ssh slate ──────────────────── git fetch && checkout && pull
   ├─ scp .handoff.md ──────────── .handoff.md lands in project root
-  └─ ssh glob ──────────────────── tmux new-session 'omp'
+  └─ ssh slate ──────────────────── tmux new-session 'omp'
 
-advect pull glob
+advect pull slate
   ├─ preflight checks
-  ├─ ssh glob ──────────────────── git add -A && commit [wip] && push
-  ├─ ssh glob ──────────────────── sync notes, ws sweep
+  ├─ ssh slate ──────────────────── git add -A && commit [wip] && push
+  ├─ ssh slate ──────────────────── sync notes, ws sweep
   ├─ scp .handoff.md ◄──────────── retrieve handoff
   ├─ git pull --ff-only
   └─ unwrap WIP? [Y/n]

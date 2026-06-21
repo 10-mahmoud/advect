@@ -75,7 +75,7 @@ def push(posargs_):
     """Push current work to a remote machine and start an agent session.
 
     Positional args: [target] <message>
-      target   Remote host (default: glob)
+      target   Remote host (default: slate)
       message  What you're working on (required)
     """
     posargs = list(posargs_)
@@ -83,7 +83,7 @@ def push(posargs_):
         echo("\u2717 Message is required: advect push [target] \"what you're working on\"")
         sys.exit(1)
     elif len(posargs) == 1:
-        target = "glob"
+        target = "slate"
         message = posargs[0]
     else:
         target = posargs[0]
@@ -195,10 +195,10 @@ def pull(posargs_):
     """Pull in-progress work from a remote machine.
 
     Positional args: [remote]
-      remote   Remote host (default: glob)
+      remote   Remote host (default: slate)
     """
     posargs = list(posargs_)
-    remote = posargs[0] if posargs else "glob"
+    remote = posargs[0] if posargs else "slate"
 
     echo(f"Pulling from {remote}...")
     echo("")

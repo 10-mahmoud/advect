@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "advect"
+version = "0.1.0"
+description = "Rapid agentic work handoff between machines"
+license = "MIT"
+authors = ["Mahmoud Hashemi <mahmoud@hatnote.com>"]
+readme = "README.md"
+packages = [{include = "advect", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+face = ">=24.0.0"
+
+[tool.poetry.scripts]
+advect = "advect.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)"
+]

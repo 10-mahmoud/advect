@@ -4,7 +4,8 @@ import os
 import re
 import socket
 import subprocess
-import sys
+
+from face import UsageError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,10 +39,15 @@ def check_host_reachable(host: str) -> tuple[bool, str]:
 
 
 def check_ssh(host: str) -> tuple[bool, str]:
+    # Fast path: BatchMode (no interactive prompts)
     res = _run(["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", host, "echo", "ok"])
-    if res.returncode != 0:
-        return False, f"SSH to {host} failed. Check ~/.ssh/config and tailscale auth"
-    return True, f"SSH to {host} ok"
+    if res.returncode == 0:
+        return True, f"SSH to {host} ok"
+    # Slow path: allow interactive auth (Tailscale SSH check-mode)
+    res = _run(["ssh", "-o", "ConnectTimeout=10", host, "echo", "ok"])
+    if res.returncode == 0:
+        return True, f"SSH to {host} ok (auth refreshed)"
+    return False, f"SSH to {host} failed. Check ~/.ssh/config and tailscale auth"
 
 
 def check_git_repo() -> tuple[bool, str]:
@@ -64,7 +70,7 @@ def run_preflight(host: str) -> None:
         symbol = "\u2713" if ok else "\u2717"
         print(f"  {symbol} {label}: {msg}")
         if not ok:
-            sys.exit(1)
+            raise UsageError(f"{label}: {msg}")
 
 
 # -- Git context detection --
@@ -111,8 +117,7 @@ def _detect_parent_dir(root: str) -> str:
 def detect_project() -> ProjectContext:
     root = _git("rev-parse", "--show-toplevel")
     if not root:
-        print("\u2717 Not in a git repository")
-        sys.exit(1)
+        raise UsageError("Not in a git repository")
 
     common_dir = _git("rev-parse", "--git-common-dir")
     git_dir = _git("rev-parse", "--git-dir")
@@ -175,8 +180,7 @@ def push_branch(branch: str) -> None:
         # Try setting upstream
         res2 = _run(["git", "push", "-u", "origin", branch])
         if res2.returncode != 0:
-            print(f"  \u2717 Failed to push branch: {res2.stderr.strip()}")
-            sys.exit(1)
+            raise UsageError(f"Failed to push branch: {res2.stderr.strip()}")
         print(f"  \u2713 Pushed {branch} (set upstream)")
     else:
         print(f"  \u2713 Pushed {branch}")
@@ -188,8 +192,7 @@ def pull_branch(branch: str) -> None:
         print(f"  \u26a0 Fast-forward pull failed, doing regular pull")
         res2 = _run(["git", "pull", "origin", branch])
         if res2.returncode != 0:
-            print(f"  \u2717 Pull failed: {res2.stderr.strip()}")
-            sys.exit(1)
+            raise UsageError(f"Pull failed: {res2.stderr.strip()}")
     print(f"  \u2713 Pulled {branch}")
 
 

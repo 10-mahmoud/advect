@@ -2,9 +2,8 @@
 
 import os
 import socket
-import sys
 
-from face import Command, echo
+from face import Command, Flag, UsageError, echo
 
 from advect.core import (
     ProjectContext,
@@ -65,13 +64,89 @@ def init_():
     """Initialize advect in the current project (adds .handoff.md to .gitignore)."""
     ok, msg = check_git_repo()
     if not ok:
-        echo(f"\u2717 {msg}")
-        sys.exit(1)
+        raise UsageError(msg)
     ctx = detect_project()
     _ensure_handoff_ignored(ctx)
 
 
-def push(posargs_):
+def _push_remote(target: str, ctx: ProjectContext, handoff_path: str, force: bool = False) -> str:
+    """Execute remote operations for push. Returns the tmux session name.
+
+    Raises UsageError on any remote failure so the caller can roll back.
+    """
+    remote_path = _remote_project_path(ctx)
+    echo(f"  Remote path: {remote_path}")
+
+    # Agent-env setup
+    ae_check = _run(["ssh", target, "test -d ~/work/agent-env"])
+    if ae_check.returncode == 0:
+        ensure_agent_env(target)
+
+    # Pull on remote (clone if repo doesn't exist)
+    worktree_basename = os.path.basename(ctx.worktree_dir) if ctx.is_worktree else ""
+    clone_url = ctx.remote_url
+    pull_script = f"""
+set -e
+if cd {remote_path} 2>/dev/null; then
+    git fetch origin
+    git checkout {ctx.branch} 2>/dev/null || git checkout -b {ctx.branch} origin/{ctx.branch}
+    # If HEAD is an advect WIP commit, it's disposable — hard reset to origin
+    if git log -1 --format=%s | grep -q '\\[advect:wip\\]'; then
+        git reset --hard origin/{ctx.branch}
+    else
+        git pull --ff-only origin {ctx.branch} || git reset --hard origin/{ctx.branch}
+    fi
+elif [ -d ~/{ctx.parent_dir}/{ctx.name} ] && [ -n "{worktree_basename}" ]; then
+    cd ~/{ctx.parent_dir}/{ctx.name}
+    git fetch origin
+    git worktree add ../{worktree_basename} {ctx.branch}
+    cd {remote_path}
+else
+    mkdir -p ~/{ctx.parent_dir}
+    git clone {clone_url} {remote_path}
+    cd {remote_path}
+    git checkout {ctx.branch} 2>/dev/null || true
+fi
+"""
+    try:
+        ssh_run(target, pull_script)
+        echo("  ✓ Remote repo updated")
+    except RuntimeError as e:
+        raise UsageError(f"Remote pull failed: {e}")
+
+    # Run project hooks if they exist
+    _run(["ssh", target,
+          f"test -x {remote_path}/.advect/on-arrive.sh && cd {remote_path} && ./.advect/on-arrive.sh"])
+
+    # Transfer handoff file
+    scp_to(target, handoff_path, f"{remote_path}/.handoff.md")
+    echo("  ✓ Handoff file transferred")
+
+    # Start omp in tmux inside agent-env
+    session = _make_session_name(ctx.name, ctx.branch)
+    container_path = remote_path.replace("~", "/home/dev")
+
+    if force:
+        _run(["ssh", target,
+              f"docker exec agent-env tmux kill-session -t {session} 2>/dev/null"])
+
+    tmux_check = _run([
+        "ssh", target,
+        f"docker exec agent-env tmux has-session -t {session} 2>/dev/null"
+    ])
+    if tmux_check.returncode == 0:
+        echo(f"  ⚠ tmux session '{session}' already exists on {target}. Skipping creation.")
+    else:
+        _run([
+            "ssh", target,
+            f"docker exec -u dev -w {container_path} agent-env tmux new-session -d -s {session} 'omp'"
+        ])
+        echo(f"  ✓ omp session started: {session}")
+
+    return session
+
+
+def push(posargs_, force=False):
     """Push current work to a remote machine and start an agent session.
 
     Positional args: [target] <message>
@@ -80,8 +155,7 @@ def push(posargs_):
     """
     posargs = list(posargs_)
     if len(posargs) == 0:
-        echo("\u2717 Message is required: advect push [target] \"what you're working on\"")
-        sys.exit(1)
+        raise UsageError("Message is required: advect push [target] \"what you're working on\"")
     elif len(posargs) == 1:
         target = "slate"
         message = posargs[0]
@@ -118,68 +192,26 @@ def push(posargs_):
     # 8-9. Generate and write handoff
     content = generate_handoff(ctx, message, wip)
     handoff_path = write_handoff(ctx, content)
-    echo("  \u2713 Handoff context written to .handoff.md")
+    echo("  ✓ Handoff context written to .handoff.md")
 
-    # 10. Determine remote path
-    remote_path = _remote_project_path(ctx)
-    echo(f"  Remote path: {remote_path}")
-
-    # 11. Remote setup
-    # Check if agent-env exists on target
-    ae_check = _run(["ssh", target, "test -d ~/work/agent-env"])
-    if ae_check.returncode == 0:
-        ensure_agent_env(target)
-
-    # Pull on remote
-    worktree_basename = os.path.basename(ctx.worktree_dir) if ctx.is_worktree else ""
-    pull_script = f"""
-cd {remote_path} 2>/dev/null || {{
-    cd ~/{ctx.parent_dir}/{ctx.name} 2>/dev/null && \
-    git fetch origin && \
-    git worktree add ../{worktree_basename} {ctx.branch}
-    cd {remote_path}
-}}
-git fetch origin
-git checkout {ctx.branch} 2>/dev/null || git checkout -b {ctx.branch} origin/{ctx.branch}
-git pull --ff-only origin {ctx.branch} || git pull origin {ctx.branch}
-"""
+    # 10-13: remote operations — rollback WIP on failure
     try:
-        ssh_run(target, pull_script)
-        echo("  \u2713 Remote repo updated")
-    except RuntimeError as e:
-        echo(f"  \u2717 Remote pull failed: {e}")
-        sys.exit(1)
-
-    # Run project hooks if they exist
-    _run(["ssh", target,
-          f"test -x {remote_path}/.advect/on-arrive.sh && cd {remote_path} && ./.advect/on-arrive.sh"])
-
-    # 12. Transfer handoff file
-    scp_to(target, handoff_path, f"{remote_path}/.handoff.md")
-    echo("  \u2713 Handoff file transferred")
-
-    # 13. Start omp in tmux inside agent-env
-    session = _make_session_name(ctx.name, ctx.branch)
-    # Resolve container working dir (same path structure as host)
-    container_path = remote_path.replace("~", "/home/dev")
-
-    # Check if tmux session already exists
-    tmux_check = _run([
-        "ssh", target,
-        f"docker exec agent-env tmux has-session -t {session} 2>/dev/null"
-    ])
-    if tmux_check.returncode == 0:
-        echo(f"  \u26a0 tmux session '{session}' already exists on {target}. Skipping creation.")
-    else:
-        _run([
-            "ssh", target,
-            f"docker exec -u dev -w {container_path} agent-env tmux new-session -d -s {session} 'omp'"
-        ])
-        echo("  \u2713 omp session started: {session}")
+        session = _push_remote(target, ctx, handoff_path, force=force)
+    except UsageError:
+        if wip:
+            echo("")
+            echo("  ⟲ Rolling back WIP commit...")
+            unwrap_wip()
+            res = _run(["git", "push", "--force-with-lease", "origin", ctx.branch])
+            if res.returncode == 0:
+                echo("  ⟲ Origin restored to pre-WIP state")
+            else:
+                echo(f"  ⚠ Could not restore origin. Manual fix: git push --force-with-lease origin {ctx.branch}")
+        raise
 
     # 14. Summary
     echo("")
-    echo(f"\u2713 Handoff complete: {ctx.name}/{ctx.branch} \u2192 {target}")
+    echo(f"✓ Handoff complete: {ctx.name}/{ctx.branch} → {target}")
     echo("")
     echo(f"  Agent session: {session}")
     echo("")
@@ -235,8 +267,7 @@ fi
         else:
             echo("  \u2713 Remote is clean")
     except RuntimeError as e:
-        echo(f"  \u2717 Remote commit/push failed: {e}")
-        sys.exit(1)
+        raise UsageError(f"Remote commit/push failed: {e}")
 
     # 5. SSH into remote -- sync notes and sweep
     notes_script = """
@@ -317,8 +348,7 @@ def resume():
     """Resume work after a manual pull. Shows handoff context and unwraps WIP if present."""
     ok, msg = check_git_repo()
     if not ok:
-        echo(f"\u2717 {msg}")
-        sys.exit(1)
+        raise UsageError(msg)
 
     ctx = detect_project()
     handoff_path = os.path.join(ctx.root, ".handoff.md")
@@ -352,8 +382,7 @@ def setup():
     """Install or update the advect omp skill (symlinks into ~/.omp/agent/skills/)."""
     source = _get_skill_source()
     if not os.path.exists(source):
-        echo(f"\u2717 Skill source not found at {source}")
-        sys.exit(1)
+        raise UsageError(f"Skill source not found at {source}")
 
     # Check current state
     if os.path.islink(_OMP_SKILL_PATH):
@@ -380,7 +409,10 @@ def main():
     cmd = Command(name="advect", func=None, doc="Rapid agentic work handoff between machines.")
     cmd.add(init_, name="init")
     cmd.add(setup, name="setup")
-    cmd.add(push, name="push", posargs=True)
+    push_cmd = Command(push, name="push", posargs=True)
+    push_cmd.add(Flag('--force', char='-f', parse_as=True, missing=False,
+                       doc='Force: kill existing tmux session, reset remote state'))
+    cmd.add(push_cmd)
     cmd.add(pull, name="pull", posargs=True)
     cmd.add(resume, name="resume")
     cmd.run()

@@ -1,7 +1,8 @@
 """SSH execution helpers for remote operations."""
 
 import subprocess
-import sys
+
+from face import UsageError
 
 
 def ssh_run(host: str, command: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -34,8 +35,7 @@ def scp_to(host: str, local_path: str, remote_path: str) -> None:
         text=True,
     )
     if res.returncode != 0:
-        print(f"  \u2717 scp to {host} failed: {res.stderr.strip()}")
-        sys.exit(1)
+        raise UsageError(f"scp to {host} failed: {res.stderr.strip()}")
 
 
 def scp_from(host: str, remote_path: str, local_path: str) -> None:
@@ -46,8 +46,7 @@ def scp_from(host: str, remote_path: str, local_path: str) -> None:
         text=True,
     )
     if res.returncode != 0:
-        print(f"  \u2717 scp from {host} failed: {res.stderr.strip()}")
-        sys.exit(1)
+        raise UsageError(f"scp from {host} failed: {res.stderr.strip()}")
 
 
 def ensure_agent_env(host: str) -> None:
@@ -65,9 +64,8 @@ def ensure_agent_env(host: str) -> None:
         text=True,
     )
     if verify.returncode != 0:
-        print(
-            f"  \u2717 agent-env container is not functional on {host}. "
+        raise UsageError(
+            f"agent-env container is not functional on {host}. "
             f"SSH in and run: cd ~/work/agent-env && ./build.sh && ./dev.sh --recreate -d"
         )
-        sys.exit(1)
     print(f"  \u2713 agent-env is running on {host}")

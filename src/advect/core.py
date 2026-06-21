@@ -103,7 +103,7 @@ def _detect_parent_dir(root: str) -> str:
     home = str(Path.home())
     rel = os.path.relpath(root, home)
     parts = rel.split(os.sep)
-    if parts and parts[0] in ("work", "projects", "hatnote"):
+    if parts and parts[0] in ("work", "projects"):
         return parts[0]
     return "work"  # default
 
@@ -193,7 +193,7 @@ def pull_branch(branch: str) -> None:
     print(f"  \u2713 Pulled {branch}")
 
 
-# -- 10notes sync --
+# -- Notes sync --
 
 def _resolve_notes_dir() -> str:
     ws_dir = os.environ.get("WS_DIR", "")
@@ -202,9 +202,9 @@ def _resolve_notes_dir() -> str:
         notes = re.sub(r"/_Workstreams$", "", ws_dir)
         if os.path.isdir(notes):
             return notes
-    fallback = os.path.expanduser("~/work/10notes")
-    if os.path.isdir(fallback):
-        return fallback
+    notes_env = os.environ.get("ADVECT_NOTES_DIR", "")
+    if notes_env and os.path.isdir(os.path.expanduser(notes_env)):
+        return os.path.expanduser(notes_env)
     return ""
 
 
@@ -361,8 +361,6 @@ def _gather_prs(ctx: ProjectContext) -> str:
     import shutil
     if not shutil.which("gh"):
         return "unavailable (gh not installed)"
-    if ctx.gh_owner != "10-mahmoud":
-        return "unavailable (personal repo or gh not configured)"
 
     res = _run([
         "gh", "pr", "list",

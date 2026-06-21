@@ -30,11 +30,11 @@ def test_wip_commit_format():
 
 
 def test_parse_gh_owner_ssh():
-    assert _parse_gh_owner("git@github.com:10-mahmoud/finfam.git") == "10-mahmoud"
+    assert _parse_gh_owner("git@github.com:acme-org/myapp.git") == "acme-org"
 
 
 def test_parse_gh_owner_https():
-    assert _parse_gh_owner("https://github.com/mahmoud/boltons.git") == "mahmoud"
+    assert _parse_gh_owner("https://github.com/someuser/somerepo.git") == "someuser"
 
 
 def test_parse_gh_owner_empty():

@@ -339,9 +339,47 @@ def resume():
         echo("No handoff state found. Nothing to resume.")
 
 
+def _get_skill_source() -> str:
+    """Return the path to SKILL.md shipped with this package."""
+    return os.path.join(os.path.dirname(__file__), "skill", "SKILL.md")
+
+
+_OMP_SKILL_DIR = os.path.expanduser("~/.omp/agent/skills/advect")
+_OMP_SKILL_PATH = os.path.join(_OMP_SKILL_DIR, "SKILL.md")
+
+
+def setup():
+    """Install or update the advect omp skill (symlinks into ~/.omp/agent/skills/)."""
+    source = _get_skill_source()
+    if not os.path.exists(source):
+        echo(f"\u2717 Skill source not found at {source}")
+        sys.exit(1)
+
+    # Check current state
+    if os.path.islink(_OMP_SKILL_PATH):
+        current_target = os.readlink(_OMP_SKILL_PATH)
+        if os.path.realpath(current_target) == os.path.realpath(source):
+            echo(f"\u2713 Skill already installed and up to date")
+            echo(f"  {_OMP_SKILL_PATH} \u2192 {source}")
+            return
+        # Stale symlink — remove and re-create
+        os.unlink(_OMP_SKILL_PATH)
+        echo(f"  Updated symlink (was \u2192 {current_target})")
+    elif os.path.exists(_OMP_SKILL_PATH):
+        # Regular file — back it up and replace with symlink
+        backup = _OMP_SKILL_PATH + ".bak"
+        os.rename(_OMP_SKILL_PATH, backup)
+        echo(f"  Backed up existing file to {backup}")
+
+    os.makedirs(_OMP_SKILL_DIR, exist_ok=True)
+    os.symlink(source, _OMP_SKILL_PATH)
+    echo(f"\u2713 Skill installed")
+    echo(f"  {_OMP_SKILL_PATH} \u2192 {source}")
+
 def main():
     cmd = Command(name="advect", func=None, doc="Rapid agentic work handoff between machines.")
     cmd.add(init_, name="init")
+    cmd.add(setup, name="setup")
     cmd.add(push, name="push", posargs=True)
     cmd.add(pull, name="pull", posargs=True)
     cmd.add(resume, name="resume")

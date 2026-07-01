@@ -69,18 +69,28 @@ def init_():
     _ensure_handoff_ignored(ctx)
 
 
-def _push_remote(target: str, ctx: ProjectContext, handoff_path: str, force: bool = False) -> str:
-    """Execute remote operations for push. Returns the tmux session name.
+def _push_remote(target: str, ctx: ProjectContext, handoff_path: str, force: bool = False) -> tuple[str, bool]:
+    """Execute remote operations for push. Returns (session_name, native_omp).
 
+    native_omp is True when omp runs directly on the host (no agent-env container).
     Raises UsageError on any remote failure so the caller can roll back.
     """
     remote_path = _remote_project_path(ctx)
     echo(f"  Remote path: {remote_path}")
 
-    # Agent-env setup
-    ae_check = _run(["ssh", target, "test -d ~/work/agent-env"])
-    if ae_check.returncode == 0:
-        ensure_agent_env(target)
+    # Detect whether omp is available natively on the remote
+    native_omp = _run(["ssh", target, "which omp >/dev/null 2>&1"]).returncode == 0
+
+    if not native_omp:
+        # Fall back to agent-env container
+        ae_check = _run(["ssh", target, "test -d ~/work/agent-env"])
+        if ae_check.returncode == 0:
+            ensure_agent_env(target)
+        else:
+            raise UsageError(
+                f"Neither omp nor agent-env found on {target}. "
+                f"Install omp or set up ~/work/agent-env."
+            )
 
     # Pull on remote (clone if repo doesn't exist)
     worktree_basename = os.path.basename(ctx.worktree_dir) if ctx.is_worktree else ""
@@ -122,28 +132,43 @@ fi
     scp_to(target, handoff_path, f"{remote_path}/.handoff.md")
     echo("  ✓ Handoff file transferred")
 
-    # Start omp in tmux inside agent-env
+    # Start omp in tmux
     session = _make_session_name(ctx.name, ctx.branch)
-    container_path = remote_path.replace("~", "/home/dev")
 
-    if force:
-        _run(["ssh", target,
-              f"docker exec agent-env tmux kill-session -t {session} 2>/dev/null"])
+    if native_omp:
+        # Run omp directly on the host
+        if force:
+            _run(["ssh", target, f"tmux kill-session -t {session} 2>/dev/null"])
 
-    tmux_check = _run([
-        "ssh", target,
-        f"docker exec agent-env tmux has-session -t {session} 2>/dev/null"
-    ])
-    if tmux_check.returncode == 0:
-        echo(f"  ⚠ tmux session '{session}' already exists on {target}. Skipping creation.")
+        tmux_check = _run(["ssh", target, f"tmux has-session -t {session} 2>/dev/null"])
+        if tmux_check.returncode == 0:
+            echo(f"  ⚠ tmux session '{session}' already exists on {target}. Skipping creation.")
+        else:
+            _run(["ssh", target,
+                  f"cd {remote_path} && tmux new-session -d -s {session} 'omp'"])
+            echo(f"  ✓ omp session started: {session}")
     else:
-        _run([
-            "ssh", target,
-            f"docker exec -u dev -w {container_path} agent-env tmux new-session -d -s {session} 'omp'"
-        ])
-        echo(f"  ✓ omp session started: {session}")
+        # Run omp inside agent-env container
+        container_path = remote_path.replace("~", "/home/dev")
 
-    return session
+        if force:
+            _run(["ssh", target,
+                  f"docker exec agent-env tmux kill-session -t {session} 2>/dev/null"])
+
+        tmux_check = _run([
+            "ssh", target,
+            f"docker exec agent-env tmux has-session -t {session} 2>/dev/null"
+        ])
+        if tmux_check.returncode == 0:
+            echo(f"  ⚠ tmux session '{session}' already exists on {target}. Skipping creation.")
+        else:
+            _run([
+                "ssh", target,
+                f"docker exec -u dev -w {container_path} agent-env tmux new-session -d -s {session} 'omp'"
+            ])
+            echo(f"  ✓ omp session started: {session}")
+
+    return session, native_omp
 
 
 def push(posargs_, force=False):
@@ -196,7 +221,7 @@ def push(posargs_, force=False):
 
     # 10-13: remote operations — rollback WIP on failure
     try:
-        session = _push_remote(target, ctx, handoff_path, force=force)
+        session, native_omp = _push_remote(target, ctx, handoff_path, force=force)
     except UsageError:
         if wip:
             echo("")
@@ -216,11 +241,14 @@ def push(posargs_, force=False):
     echo(f"  Agent session: {session}")
     echo("")
     echo("  Reconnect:")
-    echo(f"    ssh {target} -t \"docker exec -it -u dev agent-env tmux attach -t {session}\"")
-    echo("")
-    echo("  Or via dev.sh:")
-    echo(f"    ssh {target}   # then: cd ~/work/agent-env && ./dev.sh")
-    echo(f"    tmux attach -t {session}")
+    if native_omp:
+        echo(f"    ssh {target} -t 'tmux attach -t {session}'")
+    else:
+        echo(f"    ssh {target} -t \"docker exec -it -u dev agent-env tmux attach -t {session}\"")
+        echo("")
+        echo("  Or via dev.sh:")
+        echo(f"    ssh {target}   # then: cd ~/work/agent-env && ./dev.sh")
+        echo(f"    tmux attach -t {session}")
 
 
 def pull(posargs_):
